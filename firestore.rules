@@ -5,16 +5,23 @@ service cloud.firestore {
       allow get: if request.auth != null && request.auth.uid == uid;
       allow list: if false;
       allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['version', 'username', 'usernameKey', 'meals', 'history', 'createdAt', 'updatedAt', 'lastSeenAt', 'installedAt'])
+        && request.resource.data.keys().hasAll(['version', 'username', 'usernameKey', 'meals', 'history', 'createdAt', 'updatedAt', 'lastSeenAt'])
         && request.resource.data.version == 3
         && request.resource.data.meals is list
         && request.resource.data.meals.size() <= 150
-        && request.resource.data.history is list;
+        && request.resource.data.history is list
+        && request.resource.data.history.size() <= 20
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.username is string
+        && request.resource.data.usernameKey is string;
       allow update: if request.auth != null && request.auth.uid == uid
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['username', 'usernameKey', 'createdAt']))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['version', 'meals', 'history', 'updatedAt', 'lastSeenAt', 'installedAt'])
         && request.resource.data.version == 3
         && request.resource.data.meals is list
         && request.resource.data.meals.size() <= 150
-        && request.resource.data.history is list;
+        && request.resource.data.history is list
+        && request.resource.data.history.size() <= 20;
       allow delete: if false;
     }
     match /usernames/{usernameKey} {
@@ -22,7 +29,9 @@ service cloud.firestore {
       allow list: if false;
       allow create: if request.auth != null 
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.keys().hasOnly(['uid', 'createdAt']);
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameKey == usernameKey;
       allow update, delete: if false;
     }
   }

@@ -934,17 +934,15 @@
           }
 
           const normalizedUsername = username.trim().toLowerCase();
-
           const usernameRef = doc(firestore, "usernames", normalizedUsername);
           const userRef = doc(firestore, "users", uid);
+          const initialData = cacheGet() || blank();
 
-          let initialData = cacheGet() || blank();
-          let isNewUser = false;
-          let remoteData = null;
-
-          try {
-            await runTransaction(firestore, async (transaction) => {
+          const result = await runTransaction(
+            firestore,
+            async (transaction) => {
               const usernameDoc = await transaction.get(usernameRef);
+              const userDoc = await transaction.get(userRef);
 
               if (!usernameDoc.exists()) {
                 transaction.set(usernameRef, {
@@ -952,14 +950,13 @@
                   createdAt: serverTimestamp(),
                 });
 
-                const userDoc = await transaction.get(userRef);
                 if (userDoc.exists()) {
-                  remoteData = userDoc.data();
                   transaction.update(userRef, {
+                    version: 3,
                     lastSeenAt: serverTimestamp(),
                   });
+                  return { isNew: false, remoteData: userDoc.data() };
                 } else {
-                  isNewUser = true;
                   transaction.set(userRef, {
                     version: 3,
                     username: username.trim(),
@@ -970,17 +967,17 @@
                     updatedAt: serverTimestamp(),
                     lastSeenAt: serverTimestamp(),
                   });
+                  return { isNew: true, remoteData: null };
                 }
               } else {
                 if (usernameDoc.data().uid === uid) {
-                  const userDoc = await transaction.get(userRef);
                   if (userDoc.exists()) {
-                    remoteData = userDoc.data();
                     transaction.update(userRef, {
+                      version: 3,
                       lastSeenAt: serverTimestamp(),
                     });
+                    return { isNew: false, remoteData: userDoc.data() };
                   } else {
-                    isNewUser = true;
                     transaction.set(userRef, {
                       version: 3,
                       username: username.trim(),
@@ -991,36 +988,34 @@
                       updatedAt: serverTimestamp(),
                       lastSeenAt: serverTimestamp(),
                     });
+                    return { isNew: true, remoteData: null };
                   }
                 } else {
                   throw new Error("username_taken");
                 }
               }
-            });
-          } catch (e) {
-            if (e.message === "username_taken") {
-              $("loginHint").textContent =
-                "الاسم ده محجوز على موبايل تاني، اختار اسم مختلف.";
-              $("uName").focus();
-              return false;
-            }
-            throw e;
-          }
+            },
+          );
 
-          if (remoteData) {
-            db = normalizeData(remoteData);
-          } else if (isNewUser) {
+          if (result.remoteData) {
+            db = normalizeData(result.remoteData);
+          } else if (result.isNew) {
             db = initialData;
           }
 
           user = normalizedUsername;
-
           localStorage.setItem(STORAGE.user, user);
           cacheSet();
           showApp();
           scheduleSave();
           return true;
         } catch (e) {
+          if (e.message === "username_taken") {
+            $("loginHint").textContent =
+              "الاسم ده محجوز على موبايل تاني، اختار اسم مختلف.";
+            $("uName").focus();
+            return false;
+          }
           console.error(e);
           $("loginHint").textContent = "اتأكد من الإنترنت وجرّب تاني.";
           return false;
@@ -1424,7 +1419,7 @@
           }
           if ("serviceWorker" in navigator)
             window.addEventListener("load", () =>
-              navigator.serviceWorker.register("/sw.js?v=11").catch(() => {}),
+              navigator.serviceWorker.register("/sw.js?v=12").catch(() => {}),
             );
         } catch {
           deviceToken = getDeviceToken();
