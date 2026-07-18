@@ -726,11 +726,21 @@
       </div>
     </section>
     <div class="toast" id="toast"></div>
-    
+
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js";
-      import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js";
-      import { getFirestore, doc, setDoc, getDoc, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js";
+      import {
+        getAuth,
+        signInAnonymously,
+      } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js";
+      import {
+        getFirestore,
+        doc,
+        setDoc,
+        getDoc,
+        runTransaction,
+        serverTimestamp,
+      } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js";
 
       const firebaseConfig = {
         projectId: "nataghada-eh",
@@ -739,13 +749,13 @@
         apiKey: "AIzaSyDytbxsJOEZ18E_P-UOnc5UoZJDZEb-3iI",
         authDomain: "nataghada-eh.firebaseapp.com",
         messagingSenderId: "29697144884",
-        measurementId: "G-FCS7BKGPGZ"
+        measurementId: "G-FCS7BKGPGZ",
       };
       const app = initializeApp(firebaseConfig);
       const auth = getAuth(app);
       const firestore = getFirestore(app);
 
-                  const DEF = [
+      const DEF = [
         "عيش وطعمية وفول ومسقعة وبابا غنوج",
         "كشري",
         "مكرونة بالصلصة",
@@ -833,7 +843,7 @@
           );
       }
       function normalizeData(raw) {
-        if (raw && raw.version === 3 && Array.isArray(raw.meals)) {
+        if (raw && Array.isArray(raw.meals)) {
           return {
             version: 3,
             meals: cleanList(raw.meals),
@@ -899,7 +909,7 @@
         $("sy").textContent = text;
         if (clear) setTimeout(() => ($("sy").textContent = ""), clear);
       }
-      
+
       async function api(payload) {
         return { ok: true };
       }
@@ -907,7 +917,7 @@
       function track(event, meta = {}) {
         // Tracking removed
       }
-      
+
       async function claim(username, silent = false) {
         if (!silent) {
           $("bIn").disabled = true;
@@ -915,24 +925,73 @@
           $("loginHint").textContent = "بنتأكد إن الاسم متاح";
         }
         try {
-          const cred = await signInAnonymously(auth);
-          const uid = cred.user.uid;
+          let uid;
+          if (auth.currentUser) {
+            uid = auth.currentUser.uid;
+          } else {
+            const cred = await signInAnonymously(auth);
+            uid = cred.user.uid;
+          }
+
           const normalizedUsername = username.trim().toLowerCase();
-          
+
           const usernameRef = doc(firestore, "usernames", normalizedUsername);
           const userRef = doc(firestore, "users", uid);
-          
-          let isOwner = false;
-          
+
+          let initialData = cacheGet() || blank();
+          let isNewUser = false;
+          let remoteData = null;
+
           try {
             await runTransaction(firestore, async (transaction) => {
               const usernameDoc = await transaction.get(usernameRef);
+
               if (!usernameDoc.exists()) {
-                transaction.set(usernameRef, { uid: uid });
-                isOwner = true;
+                transaction.set(usernameRef, {
+                  uid: uid,
+                  createdAt: serverTimestamp(),
+                });
+
+                const userDoc = await transaction.get(userRef);
+                if (userDoc.exists()) {
+                  remoteData = userDoc.data();
+                  transaction.update(userRef, {
+                    lastSeenAt: serverTimestamp(),
+                  });
+                } else {
+                  isNewUser = true;
+                  transaction.set(userRef, {
+                    version: 3,
+                    username: username.trim(),
+                    usernameKey: normalizedUsername,
+                    meals: initialData.meals,
+                    history: initialData.history,
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                    lastSeenAt: serverTimestamp(),
+                  });
+                }
               } else {
                 if (usernameDoc.data().uid === uid) {
-                  isOwner = true;
+                  const userDoc = await transaction.get(userRef);
+                  if (userDoc.exists()) {
+                    remoteData = userDoc.data();
+                    transaction.update(userRef, {
+                      lastSeenAt: serverTimestamp(),
+                    });
+                  } else {
+                    isNewUser = true;
+                    transaction.set(userRef, {
+                      version: 3,
+                      username: username.trim(),
+                      usernameKey: normalizedUsername,
+                      meals: initialData.meals,
+                      history: initialData.history,
+                      createdAt: serverTimestamp(),
+                      updatedAt: serverTimestamp(),
+                      lastSeenAt: serverTimestamp(),
+                    });
+                  }
                 } else {
                   throw new Error("username_taken");
                 }
@@ -940,34 +999,22 @@
             });
           } catch (e) {
             if (e.message === "username_taken") {
-              $("loginHint").textContent = "الاسم ده محجوز على موبايل تاني، اختار اسم مختلف.";
+              $("loginHint").textContent =
+                "الاسم ده محجوز على موبايل تاني، اختار اسم مختلف.";
               $("uName").focus();
               return false;
             }
             throw e;
           }
 
-          const userSnap = await getDoc(userRef);
-          let initialData = cacheGet() || blank();
-          
-          if (userSnap.exists()) {
-            db = normalizeData(userSnap.data());
-            await setDoc(userRef, { lastSeenAt: serverTimestamp() }, { merge: true });
-          } else {
+          if (remoteData) {
+            db = normalizeData(remoteData);
+          } else if (isNewUser) {
             db = initialData;
-            await setDoc(userRef, {
-              username: username.trim(),
-              usernameKey: normalizedUsername,
-              meals: db.meals,
-              history: db.history,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-              lastSeenAt: serverTimestamp()
-            });
           }
 
           user = normalizedUsername;
-          
+
           localStorage.setItem(STORAGE.user, user);
           cacheSet();
           showApp();
@@ -1005,7 +1052,7 @@
       $("uName").addEventListener("keydown", (e) => {
         if (e.key === "Enter") login();
       });
-      
+
       function scheduleSave() {
         cacheSet();
         clearTimeout(saveTimer);
@@ -1014,11 +1061,16 @@
           try {
             if (!auth.currentUser) throw new Error("not_logged_in");
             const userRef = doc(firestore, "users", auth.currentUser.uid);
-            await setDoc(userRef, {
-              meals: db.meals,
-              history: db.history,
-              updatedAt: serverTimestamp()
-            }, { merge: true });
+            await setDoc(
+              userRef,
+              {
+                version: 3,
+                meals: db.meals,
+                history: db.history,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            );
             sync("محفوظ ✓", 1700);
           } catch {
             sync("محفوظ على الموبايل", 1700);
@@ -1300,12 +1352,21 @@
           openSheet();
         }
       }
-      
+
       async function markInstalled() {
         if (!user || !auth.currentUser) return;
+        if (localStorage.getItem("mw:v2:installed") === "1") {
+          $("bInstall").classList.add("hide");
+          return;
+        }
         try {
           const userRef = doc(firestore, "users", auth.currentUser.uid);
-          await setDoc(userRef, { installedAt: serverTimestamp() }, { merge: true });
+          await setDoc(
+            userRef,
+            { installedAt: serverTimestamp() },
+            { merge: true },
+          );
+          localStorage.setItem("mw:v2:installed", "1");
         } catch {}
         $("bInstall").classList.add("hide");
       }
@@ -1363,7 +1424,7 @@
           }
           if ("serviceWorker" in navigator)
             window.addEventListener("load", () =>
-              navigator.serviceWorker.register("/sw.js?v=9").catch(() => {}),
+              navigator.serviceWorker.register("/sw.js?v=11").catch(() => {}),
             );
         } catch {
           deviceToken = getDeviceToken();
